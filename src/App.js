@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import Table from './components/Table';
 import DownloadPDF from './components/DownloadPDF';
+import RecordDetail from './components/RecordDetail';
 
 function App() {
   const [tables, setTables] = useState([]);
@@ -10,6 +11,8 @@ function App() {
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState(null);
+  // The record the user clicked on to see its detail page
+  const [selectedRecord, setSelectedRecord] = useState(null);
 
   useEffect(() => {
     fetchTables();
@@ -46,6 +49,7 @@ function App() {
 
   const fetchDataForTable = async (tableName) => {
     setSelectedTable(tableName);
+    setSelectedRecord(null); // Reset detail view when switching tables
     setLoadingData(true);
     setError(null);
     try {
@@ -63,6 +67,17 @@ function App() {
       setLoadingData(false);
     }
   };
+
+  // ── If a record is selected, render the full detail page ──
+  if (selectedRecord) {
+    return (
+      <RecordDetail
+        record={selectedRecord}
+        tableName={selectedTable}
+        onBack={() => setSelectedRecord(null)}
+      />
+    );
+  }
 
   return (
     <div style={styles.container}>
@@ -125,11 +140,20 @@ function App() {
                    <DownloadPDF data={data} tableName={selectedTable} />
                 </div>
               </div>
+
+              {/* Hint for user */}
+              <p style={styles.hint}>
+                💡 Click on an <strong>ID</strong> or <strong>External ID</strong> to view full details for that record.
+              </p>
               
               {loadingData ? (
                 <div style={styles.centerAction}><p style={styles.loadingText}>Fetching data...</p></div>
               ) : (
-                 <Table data={data} tableName={selectedTable} />
+                 <Table
+                   data={data}
+                   tableName={selectedTable}
+                   onRowClick={(row) => setSelectedRecord(row)}
+                 />
               )}
             </div>
           )}
@@ -230,7 +254,7 @@ const styles = {
   dashboard: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '1.5rem',
+    gap: '1rem',
   },
   toolbar: {
     display: 'flex',
@@ -263,6 +287,15 @@ const styles = {
     borderRadius: '6px',
     cursor: 'pointer',
     fontWeight: '500',
+  },
+  hint: {
+    fontSize: '0.88rem',
+    color: '#6b7280',
+    background: '#f0f4ff',
+    border: '1px solid #dbeafe',
+    borderRadius: '6px',
+    padding: '0.6rem 1rem',
+    margin: '0.5rem 0',
   },
   error: {
     color: '#d32f2f',
