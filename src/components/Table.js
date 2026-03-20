@@ -36,7 +36,6 @@ function Table({ data, tableName, onRowClick }) {
       );
     }
 
-    // Truncate long strings in the table
     return strVal.length > 80 ? strVal.substring(0, 78) + '…' : strVal;
   };
 
@@ -56,6 +55,7 @@ function Table({ data, tableName, onRowClick }) {
           {data.map((row, rowIndex) => (
             <tr
               key={rowIndex}
+              className="data-row"
               style={rowIndex % 2 === 0 ? styles.evenRow : styles.oddRow}
             >
               {headers.map((header) => (
@@ -75,53 +75,60 @@ const styles = {
   tableContainer: {
     width: '100%',
     overflowX: 'auto',
-    borderRadius: '8px',
-    border: '1px solid #eaeaea',
+    borderRadius: '6px',
+    border: '1px solid #E0E0E0',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
   },
   table: {
     width: '100%',
     borderCollapse: 'collapse',
     textAlign: 'left',
-    fontSize: '0.93rem',
+    fontSize: '14px',
+    fontFamily: "'Inter', -apple-system, sans-serif",
   },
   th: {
-    padding: '0.9rem 1rem',
-    backgroundColor: '#fafafa',
-    borderBottom: '2px solid #eaeaea',
+    padding: '0.85rem 1rem',
+    backgroundColor: '#F0F0F0',
+    borderBottom: '2px solid #E0E0E0',
     fontWeight: '600',
-    color: '#555',
+    fontSize: '13px',
+    color: '#333333',
     textTransform: 'capitalize',
     whiteSpace: 'nowrap',
+    letterSpacing: '0.01em',
   },
   evenRow: {
-    backgroundColor: '#ffffff',
+    backgroundColor: '#FFFFFF',
+    transition: 'background-color 0.15s',
   },
   oddRow: {
-    backgroundColor: '#f8f9fa',
+    backgroundColor: '#FAFAFA',
+    transition: 'background-color 0.15s',
   },
   td: {
-    padding: '0.85rem 1rem',
-    borderBottom: '1px solid #eaeaea',
-    color: '#333',
+    padding: '0.75rem 1rem',
+    borderBottom: '1px solid #F0F0F0',
+    color: '#333333',
     whiteSpace: 'nowrap',
     maxWidth: '280px',
     overflow: 'hidden',
     textOverflow: 'ellipsis',
+    fontSize: '14px',
   },
   nullText: {
-    color: '#aaa',
+    color: '#CCCCCC',
   },
   idLink: {
     background: 'none',
     border: 'none',
-    color: '#0a66c2',
+    color: '#008080',
     cursor: 'pointer',
-    fontSize: '0.93rem',
+    fontSize: '13px',
     padding: 0,
     textDecoration: 'underline',
     textDecorationStyle: 'dotted',
     fontFamily: 'monospace',
-    fontWeight: '500',
+    fontWeight: '600',
     textAlign: 'left',
     wordBreak: 'break-all',
     whiteSpace: 'normal',
@@ -130,10 +137,12 @@ const styles = {
   emptyState: {
     textAlign: 'center',
     padding: '4rem 1rem',
-    color: '#888',
+    color: '#999999',
     fontStyle: 'italic',
-    backgroundColor: '#fafafa',
-    borderRadius: '8px',
+    fontSize: '14px',
+    backgroundColor: '#FAFAFA',
+    borderRadius: '6px',
+    border: '1px dashed #E0E0E0',
   },
 };
 

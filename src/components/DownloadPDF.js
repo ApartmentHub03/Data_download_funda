@@ -105,15 +105,17 @@ function DownloadPDF({ data, tableName }) {
 
 const styles = {
   button: {
-    background: '#10b981',
+    background: '#008080',
     color: '#ffffff',
     border: 'none',
-    padding: '0.6rem 1.2rem',
-    fontSize: '0.95rem',
+    padding: '0.5rem 1.2rem',
+    fontSize: '13px',
     borderRadius: '6px',
-    fontWeight: '500',
-    transition: 'background 0.2s',
-    boxShadow: '0 2px 4px rgba(16, 185, 129, 0.2)',
+    fontWeight: '600',
+    fontFamily: 'inherit',
+    cursor: 'pointer',
+    transition: 'background 0.15s',
+    boxShadow: '0 2px 5px rgba(0,128,128,0.20)',
   }
 };
 

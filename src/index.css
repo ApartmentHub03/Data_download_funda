@@ -1,0 +1,41 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  background-color: #F5F5F5;
+  color: #333333;
+  font-size: 14px;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Search input focus ring */
+input[type="text"]:focus {
+  border-color: #008080 !important;
+  box-shadow: 0 0 0 3px rgba(0, 128, 128, 0.12) !important;
+  background: #fff !important;
+}
+
+/* Table row hover — applied globally so Table.js can use CSS class */
+.data-row:hover td {
+  background-color: #E8F0FE !important;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+/* Teal button hover */
+button.teal-btn:hover {
+  background-color: #006666 !important;
+}
+
+/* Sidebar nav button hover */
+button.nav-item-btn:hover {
+  background-color: #e8f5f5 !important;
+  color: #008080 !important;
+}
