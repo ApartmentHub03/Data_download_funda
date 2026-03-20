@@ -54,60 +54,106 @@ function SmartImage({ src, altLabel }) {
   );
 }
 
-// Render any value: string, URL (as image), array, or nested object—all as readable text/UI
-function SmartValue({ fieldKey, value }) {
+// ─── Detect if an array looks like {title, value, subfeatures} feature sections ─
+function isFeatureArray(arr) {
+  return (
+    Array.isArray(arr) &&
+    arr.length > 0 &&
+    typeof arr[0] === 'object' &&
+    arr[0] !== null &&
+    ('title' in arr[0] || 'subfeatures' in arr[0])
+  );
+}
+
+
+// Recursively render any object without JSON.stringify anywhere
+function DeepValue({ value, fieldKey }) {
   if (value === null || value === undefined || value === '') {
     return <span style={styles.nullText}>—</span>;
   }
 
-  // Array value (e.g. images: ["url1","url2"])
+  // ── Array ────────────────────────────────────────────────────────────────
   if (Array.isArray(value)) {
     if (value.length === 0) return <span style={styles.nullText}>—</span>;
+
+    // All-URL array → image gallery
+    if (value.every(i => typeof i === 'string' && isUrl(i))) {
+      return (
+        <div style={styles.gallery}>
+          {value.map((url, i) => <SmartImage key={i} src={url} altLabel={`${fieldKey} ${i + 1}`} />)}
+        </div>
+      );
+    }
+
+    // Feature sections: [{title, value, subfeatures}, ...]
+    if (isFeatureArray(value)) {
+      return (
+        <div style={styles.featureList}>
+          {value.map((section, i) => (
+            <div key={i} style={styles.featureSection}>
+              {section.title && (
+                <div style={styles.featureSectionTitle}>{section.title}</div>
+              )}
+              {section.value != null && section.value !== '' && (
+                <div style={styles.featureSectionValue}>{String(section.value)}</div>
+              )}
+              {Array.isArray(section.subfeatures) && section.subfeatures.map((sf, j) => (
+                <div key={j} style={styles.subFeatureRow}>
+                  {typeof sf === 'object' && sf !== null
+                    ? Object.entries(sf).map(([k, v]) => {
+                        if (v === null || v === undefined) return null;
+                        const isLabel = k === 'title' || k === 'label';
+                        return (
+                          <span key={k} style={isLabel ? styles.sfLabel : styles.sfValue}>
+                            {isLabel ? String(v) : `: ${String(v)}`}
+                          </span>
+                        );
+                      })
+                    : <span>{String(sf)}</span>
+                  }
+                </div>
+              ))}
+            </div>
+          ))}
+        </div>
+      );
+    }
+
+    // Mixed / generic array
     return (
-      <div style={styles.gallery}>
-        {value.map((item, i) => {
-          const str = String(item);
-          if (isUrl(str)) return <SmartImage key={i} src={str} altLabel={`${fieldKey} ${i + 1}`} />;
-          if (typeof item === 'object') return <FlatObject key={i} value={item} />;
-          return <span key={i} style={styles.arrayChip}>{str}</span>;
-        })}
+      <div style={styles.flatObj}>
+        {value.map((item, i) => (
+          <div key={i}>
+            <DeepValue value={item} fieldKey={`${fieldKey}[${i}]`} />
+          </div>
+        ))}
       </div>
     );
   }
 
-  // Plain object → flatten to key: value rows (no JSON.stringify)
+  // ── Plain object ──────────────────────────────────────────────────────────
   if (typeof value === 'object') {
-    return <FlatObject value={value} />;
+    return (
+      <div style={styles.flatObj}>
+        {Object.entries(value).map(([k, v]) => (
+          <div key={k} style={styles.flatRow}>
+            <span style={styles.flatKey}>{k.replace(/_/g, ' ')}</span>
+            <DeepValue value={v} fieldKey={k} />
+          </div>
+        ))}
+      </div>
+    );
   }
 
+  // ── Scalar ────────────────────────────────────────────────────────────────
   const str = String(value);
-
-  // URL → try as image
-  if (isUrl(str)) {
-    return <SmartImage src={str} altLabel={fieldKey} />;
-  }
-
+  if (isUrl(str)) return <SmartImage src={str} altLabel={fieldKey} />;
   return <span>{str}</span>;
 }
 
-// Renders a plain object as a mini key-value table (no JSON/pre)
-function FlatObject({ value }) {
-  if (!value || typeof value !== 'object') return <span>{String(value)}</span>;
-
-  const entries = Object.entries(value);
-  return (
-    <div style={styles.flatObj}>
-      {entries.map(([k, v]) => {
-        const strV = v === null || v === undefined ? '—' : String(v);
-        return (
-          <div key={k} style={styles.flatRow}>
-            <span style={styles.flatKey}>{k.replace(/_/g, ' ')}</span>
-            <span style={styles.flatVal}>{strV}</span>
-          </div>
-        );
-      })}
-    </div>
-  );
+// Keep SmartValue as a thin alias over DeepValue
+function SmartValue({ fieldKey, value }) {
+  return <DeepValue value={value} fieldKey={fieldKey || ''} />;
 }
 
 // ─── Collect all image URLs from a record ───────────────────────────────────
@@ -125,21 +171,57 @@ function collectImageUrls(record) {
   return urls;
 }
 
-// ─── Flatten any value to a string for PDF text cells ───────────────────────
-function flattenForPDF(value) {
+// ─── Flatten any value recursively to a human-readable string for PDF ────────
+function flattenForPDF(value, depth) {
+  const d = depth || 0;
   if (value === null || value === undefined) return '—';
-  if (typeof value === 'string') return value;
+  if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+  if (typeof value === 'number') return String(value);
+  if (typeof value === 'string') return value || '—';
+
   if (Array.isArray(value)) {
-    const texts = value
+    if (value.length === 0) return '—';
+
+    // All-URL array → skip (they are images)
+    if (value.every(i => typeof i === 'string' && isUrl(String(i)))) return '(see images)';
+
+    // Feature sections: [{title, value?, subfeatures?}, ...]
+    if (isFeatureArray(value)) {
+      return value.map(section => {
+        const lines = [];
+        if (section.title) lines.push(section.title.toUpperCase());
+        if (section.value != null && section.value !== '') lines.push(String(section.value));
+        if (Array.isArray(section.subfeatures)) {
+          section.subfeatures.forEach(sf => {
+            if (typeof sf === 'object' && sf !== null) {
+              const sfParts = Object.entries(sf)
+                .filter(([, v]) => v !== null && v !== undefined)
+                .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`);
+              if (sfParts.length) lines.push('  • ' + sfParts.join(', '));
+            } else {
+              lines.push('  • ' + String(sf));
+            }
+          });
+        }
+        return lines.join('\n');
+      }).join('\n\n');
+    }
+
+    // Generic array
+    return value
       .filter(v => !isUrl(String(v)))
-      .map(v => (typeof v === 'object' ? Object.entries(v).map(([k, vv]) => `${k}: ${vv}`).join(', ') : String(v)));
-    return texts.length ? texts.join('; ') : '(see images)';
+      .map(v => flattenForPDF(v, d + 1))
+      .filter(s => s && s !== '—')
+      .join(d === 0 ? '\n' : '; ') || '—';
   }
+
   if (typeof value === 'object') {
     return Object.entries(value)
-      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v ?? '—'}`)
-      .join(' | ');
+      .filter(([, v]) => v !== null && v !== undefined)
+      .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${flattenForPDF(v, d + 1)}`)
+      .join(' | ') || '—';
   }
+
   return String(value);
 }
 
@@ -577,6 +659,44 @@ const styles = {
     padding: '0.2rem 0.6rem',
     borderRadius: '4px',
     fontSize: '0.83rem',
+  },
+  featureList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.75rem',
+    width: '100%',
+  },
+  featureSection: {
+    borderLeft: '3px solid #008080',
+    paddingLeft: '0.75rem',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '0.2rem',
+  },
+  featureSectionTitle: {
+    fontWeight: '700',
+    fontSize: '0.88rem',
+    color: '#1E2A38',
+    textTransform: 'capitalize',
+  },
+  featureSectionValue: {
+    fontSize: '0.88rem',
+    color: '#555555',
+  },
+  subFeatureRow: {
+    display: 'flex',
+    gap: '0.2rem',
+    flexWrap: 'wrap',
+    fontSize: '0.85rem',
+    color: '#333333',
+    paddingLeft: '0.5rem',
+  },
+  sfLabel: {
+    fontWeight: '600',
+    color: '#444444',
+  },
+  sfValue: {
+    color: '#555555',
   },
   flatObj: {
     display: 'flex',
