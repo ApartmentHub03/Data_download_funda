@@ -6,13 +6,13 @@ import RecordDetail from './components/RecordDetail';
 
 function App() {
   const [tables, setTables] = useState([]);
-  const [selectedTable, setSelectedTable] = useState(null);
+  const [selectedTable, setSelectedTable] = useState('');
   const [data, setData] = useState([]);
   const [loadingTables, setLoadingTables] = useState(false);
   const [loadingData, setLoadingData] = useState(false);
   const [error, setError] = useState(null);
   const [searchQuery, setSearchQuery] = useState('');
-  // The record the user clicked on to see its detail page
+  
   const [selectedRecord, setSelectedRecord] = useState(null);
 
   useEffect(() => {
@@ -25,13 +25,7 @@ function App() {
     setError(null);
     try {
       const { data: tableData, error: fetchError } = await supabase.rpc('get_public_tables');
-      
-      if (fetchError) {
-        if (fetchError.message.includes('Could not find the function')) {
-          throw new Error('Please run the SQL script in Supabase to create the get_public_tables function.');
-        }
-        throw fetchError;
-      }
+      if (fetchError) throw fetchError;
       
       const tableNames = tableData ? tableData.map(t => t.table_name) : [];
       setTables(tableNames);
@@ -49,18 +43,15 @@ function App() {
   };
 
   const fetchDataForTable = async (tableName) => {
+    if (!tableName) return;
     setSelectedTable(tableName);
     setSelectedRecord(null);
     setSearchQuery('');
     setLoadingData(true);
     setError(null);
     try {
-      const { data: tableData, error: fetchError } = await supabase
-        .from(tableName)
-        .select('*');
-
+      const { data: tableData, error: fetchError } = await supabase.from(tableName).select('*');
       if (fetchError) throw fetchError;
-      
       setData(tableData || []);
     } catch (err) {
       console.error(`Error fetching data for ${tableName}:`, err);
@@ -70,7 +61,6 @@ function App() {
     }
   };
 
-  // ── Search filtering ──────────────────────────────────────────────────────
   const SEARCH_COLS = ['id', 'external_id', 'global_id'];
   const filteredData = searchQuery.trim() === ''
     ? data
@@ -81,7 +71,6 @@ function App() {
         )
       );
 
-  // ── If a record is selected, render the full detail page ──
   if (selectedRecord) {
     return (
       <RecordDetail
@@ -94,67 +83,68 @@ function App() {
 
   return (
     <div style={styles.container}>
+      {/* ── Sticky Top Navbar ── */}
       <header style={styles.header}>
-        <h1 style={styles.title}>Dynamic Data Dashboard</h1>
-        <p style={styles.subtitle}>Select any table from your Supabase project</p>
-      </header>
-      
-      {error && <div style={styles.error}>Error: {error}</div>}
-
-      <div style={styles.layout}>
-        {/* Sidebar */}
-        <aside style={styles.sidebar}>
-          <h3 style={styles.sidebarTitle}>Your Tables</h3>
-          
+        <div style={styles.headerLeft}>
+          <div style={styles.logoCircle}>
+            <span style={styles.logoText}>D</span>
+          </div>
+          <div>
+            <h1 style={styles.title}>Dynamic Data Dashboard</h1>
+            <p style={styles.subtitle}>Supabase Explorer</p>
+          </div>
+        </div>
+        
+        <div style={styles.headerCenter}>
           {loadingTables ? (
-            <p style={styles.loadingText}>Loading tables...</p>
-          ) : tables.length === 0 ? (
-            <p style={styles.emptyText}>No tables found.</p>
-          ) : (
-             <div style={styles.navList}>
-              {tables.map(tbl => (
-                <button
-                  key={tbl}
-                  onClick={() => fetchDataForTable(tbl)}
-                  style={{
-                    ...styles.navItem,
-                    ...(selectedTable === tbl ? styles.navItemSelected : {})
-                  }}
-                >
-                  {tbl.replace(/_/g, ' ')}
-                </button>
-              ))}
+            <span style={styles.navLoading}>Loading tables...</span>
+          ) : tables.length > 0 && (
+            <div style={styles.tableSelectorWrap}>
+              <select 
+                value={selectedTable} 
+                onChange={(e) => fetchDataForTable(e.target.value)}
+                style={styles.tableSelect}
+              >
+                {tables.map(tbl => (
+                  <option key={tbl} value={tbl} style={{color: '#333'}}>{tbl.replace(/_/g, ' ')}</option>
+                ))}
+              </select>
+              <div style={styles.selectChevron}>▼</div>
             </div>
           )}
-          
-          <button onClick={fetchTables} disabled={loadingTables} style={styles.refreshBtn}>
-            Refresh Tables List
+        </div>
+
+        <div style={styles.headerRight}>
+          <button 
+            onClick={() => fetchDataForTable(selectedTable)} 
+            disabled={loadingData || !selectedTable} 
+            style={styles.actionBtn}
+            className="action-btn-hover"
+          >
+            {loadingData ? '⏳ Refreshing...' : '↻ Refresh'}
           </button>
-        </aside>
+          
+          <div className="action-btn-hover" style={styles.pdfWrap}>
+             {selectedTable && data.length > 0 && (
+               <DownloadPDF data={filteredData} tableName={selectedTable} />
+             )}
+          </div>
+        </div>
+      </header>
+      
+      {/* ── Main Content Area ── */}
+      <main style={styles.main}>
+        {error && <div style={styles.errorBanner}>{error}</div>}
 
-        {/* Main Content */}
-        <main style={styles.main}>
-          {!selectedTable ? (
-            <div style={styles.centerAction}>
-              <p style={styles.mutedText}>Select a table from the sidebar to view data.</p>
-            </div>
-          ) : (
-            <div style={styles.dashboard}>
-              <div style={styles.toolbar}>
-                <h2 style={styles.tableTitle}>Data: <span style={styles.highlight}>{selectedTable}</span></h2>
-                <div style={styles.actions}>
-                   <button 
-                     onClick={() => fetchDataForTable(selectedTable)} 
-                     disabled={loadingData} 
-                     style={styles.secondaryButton}
-                   >
-                     {loadingData ? 'Refreshing...' : 'Refresh Data'}
-                   </button>
-                   <DownloadPDF data={data} tableName={selectedTable} />
-                </div>
-              </div>
-
-              {/* Search bar */}
+        {!selectedTable && !loadingTables && !error ? (
+          <div style={styles.emptyState}>
+            <div style={styles.emptyIcon}>📂</div>
+            <p>Select a table from the top menu to view data.</p>
+          </div>
+        ) : (
+          <div style={styles.card}>
+            {/* Search & Info */}
+            <div style={styles.cardTop}>
               <div style={styles.searchWrap}>
                 <span style={styles.searchIcon}>🔍</span>
                 <input
@@ -163,26 +153,32 @@ function App() {
                   value={searchQuery}
                   onChange={e => setSearchQuery(e.target.value)}
                   style={styles.searchInput}
+                  className="search-input"
                 />
                 {searchQuery && (
-                  <button onClick={() => setSearchQuery('')} style={styles.clearBtn} title="Clear search">
-                    ✕
-                  </button>
+                  <button onClick={() => setSearchQuery('')} style={styles.clearBtn} title="Clear search">✕</button>
                 )}
               </div>
-              {searchQuery && (
-                <p style={styles.searchMeta}>
-                  {filteredData.length} result{filteredData.length !== 1 ? 's' : ''} for <strong>"{searchQuery}"</strong>
-                </p>
-              )}
-
-              {/* Hint for user */}
-              <p style={styles.hint}>
-                💡 Click on an <strong>ID</strong> or <strong>External ID</strong> to view full details for that record.
-              </p>
               
+              <div style={styles.infoBanner}>
+                <span style={styles.infoIcon}>💡</span>
+                <span>Click on any highlighted <strong>ID</strong> or <strong>External ID</strong> to view the full details profile.</span>
+              </div>
+            </div>
+
+            {searchQuery && (
+               <p style={styles.searchMeta}>
+                 Found <strong style={{color: '#0F766E'}}>{filteredData.length}</strong> result{filteredData.length !== 1 ? 's' : ''} for "{searchQuery}"
+               </p>
+            )}
+
+            {/* Table Area */}
+            <div style={styles.tableSection}>
               {loadingData ? (
-                <div style={styles.centerAction}><p style={styles.loadingText}>Fetching data...</p></div>
+                <div style={styles.loadingState}>
+                  <div style={styles.spinner}></div>
+                  <p>Fetching {selectedTable} data...</p>
+                </div>
               ) : (
                  <Table
                    data={filteredData}
@@ -191,252 +187,314 @@ function App() {
                  />
               )}
             </div>
-          )}
-        </main>
-      </div>
+          </div>
+        )}
+      </main>
+
+      {/* Global styles injection for animations and strictly preventing horizontal scroll */}
+      <style>{`
+        body { 
+          margin: 0; 
+          background: #F4F9F9; 
+          overflow-x: hidden !important; 
+          width: 100vw;
+        }
+        * { box-sizing: border-box; }
+        
+        .table-row-hover {
+          transition: background-color 0.2s ease, transform 0.15s ease, box-shadow 0.15s ease;
+        }
+        .table-row-hover:hover {
+          background-color: #F0FDFA !important;
+          transform: translateY(-1px);
+          box-shadow: 0 4px 12px rgba(13, 148, 136, 0.08);
+          position: relative;
+          z-index: 10;
+        }
+
+        .action-btn-hover {
+          transition: all 0.25s ease;
+        }
+        .action-btn-hover:hover {
+          box-shadow: 0 0 12px rgba(20, 184, 166, 0.4);
+          transform: translateY(-1px);
+        }
+
+        .search-input:focus {
+          border-color: #14B8A6 !important;
+          box-shadow: 0 0 0 3px rgba(20, 184, 166, 0.15) !important;
+        }
+
+        @keyframes spin {
+          to { transform: rotate(360deg); }
+        }
+      `}</style>
     </div>
   );
 }
 
 const styles = {
-  // ── Page wrapper ──────────────────────────────────────────────────────────
   container: {
-    maxWidth: '1400px',
-    margin: '0 auto',
-    padding: '0 0 3rem 0',
     minHeight: '100vh',
-    background: '#F5F5F5',
+    fontFamily: "'Inter', system-ui, -apple-system, sans-serif",
+    color: '#1E293B',
+    paddingBottom: '4rem',
+    overflowX: 'hidden',
   },
 
-  // ── Top navbar ───────────────────────────────────────────────────────────
+  // ── Header (Sticky, Gradient) ──
   header: {
-    background: '#1E2A38',
-    padding: '0 2.5rem',
-    marginBottom: '2rem',
+    position: 'sticky',
+    top: 0,
+    zIndex: 50,
+    // Dual color gradient requested by user (Deep Teal to Vibrant Turquoise/Soft Green)
+    background: 'linear-gradient(135deg, #0F766E 0%, #14B8A6 100%)', 
+    padding: '0.75rem 2rem',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    height: '64px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.18)',
+    boxShadow: '0 4px 20px rgba(15, 118, 110, 0.25)',
+    gap: '1.5rem',
+  },
+  headerLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '1rem',
+    flex: '1 1 20%',
+  },
+  logoCircle: {
+    width: '36px',
+    height: '36px',
+    borderRadius: '10px',
+    background: 'rgba(255,255,255,0.2)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backdropFilter: 'blur(4px)',
+    border: '1px solid rgba(255,255,255,0.3)',
+    boxShadow: '0 2px 6px rgba(0,0,0,0.1)',
+  },
+  logoText: {
+    color: '#FFFFFF',
+    fontWeight: '800',
+    fontSize: '18px',
   },
   title: {
-    fontSize: '20px',
-    fontWeight: '700',
-    color: '#FFFFFF',
     margin: 0,
-    letterSpacing: '-0.3px',
+    color: '#FFFFFF',
+    fontSize: '17px',
+    fontWeight: '700',
+    letterSpacing: '-0.2px',
+    textShadow: '0 1px 2px rgba(0,0,0,0.1)',
   },
   subtitle: {
-    fontSize: '13px',
-    color: 'rgba(255,255,255,0.55)',
-    fontWeight: '400',
-  },
-
-  // ── Body layout ──────────────────────────────────────────────────────────
-  layout: {
-    display: 'flex',
-    gap: '1.5rem',
-    alignItems: 'flex-start',
-    flexWrap: 'wrap',
-    padding: '0 2rem',
-  },
-
-  // ── Sidebar ───────────────────────────────────────────────────────────────
-  sidebar: {
-    flex: '0 0 220px',
-    background: '#FFFFFF',
-    borderRadius: '8px',
-    padding: '1.25rem',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    border: '1px solid #E0E0E0',
-  },
-  sidebarTitle: {
-    margin: '0 0 1rem 0',
+    margin: 0,
+    color: '#CCFBF1',
     fontSize: '11px',
-    fontWeight: '700',
-    color: '#999999',
+    fontWeight: '500',
     textTransform: 'uppercase',
-    letterSpacing: '0.09em',
-    borderBottom: '1px solid #E0E0E0',
-    paddingBottom: '0.75rem',
-  },
-  navList: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '2px',
-    marginBottom: '1.25rem',
-  },
-  navItem: {
-    padding: '0.6rem 0.9rem',
-    textAlign: 'left',
-    background: 'transparent',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    fontSize: '14px',
-    color: '#555555',
-    textTransform: 'capitalize',
-    fontWeight: '500',
-    transition: 'all 0.15s ease',
-    width: '100%',
-  },
-  navItemSelected: {
-    background: '#008080',
-    color: '#FFFFFF',
-    fontWeight: '600',
-  },
-  refreshBtn: {
-    width: '100%',
-    padding: '0.6rem',
-    background: '#F5F5F5',
-    color: '#444',
-    border: '1px solid #E0E0E0',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    fontWeight: '500',
-    fontSize: '13px',
-    transition: 'background 0.15s',
+    letterSpacing: '0.5px',
   },
 
-  // ── Main content card ─────────────────────────────────────────────────────
-  main: {
-    flex: '1 1 600px',
-    background: '#FFFFFF',
-    borderRadius: '8px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.05)',
-    padding: '1.75rem 2rem',
-    minHeight: '400px',
-    border: '1px solid #E0E0E0',
-  },
-  centerAction: {
+  headerCenter: {
+    flex: '1 1 40%',
     display: 'flex',
     justifyContent: 'center',
-    alignItems: 'center',
-    minHeight: '200px',
   },
-  dashboard: {
+  tableSelectorWrap: {
+    position: 'relative',
+    width: '100%',
+    maxWidth: '300px',
+  },
+  tableSelect: {
+    width: '100%',
+    appearance: 'none',
+    background: 'rgba(255, 255, 255, 0.15)',
+    border: '1px solid rgba(255, 255, 255, 0.3)',
+    backdropFilter: 'blur(10px)',
+    color: '#FFFFFF',
+    fontSize: '14px',
+    fontWeight: '600',
+    padding: '0.6rem 2.5rem 0.6rem 1.25rem',
+    borderRadius: '20px',
+    cursor: 'pointer',
+    outline: 'none',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
+  },
+  selectChevron: {
+    position: 'absolute',
+    right: '1rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    color: '#FFFFFF',
+    fontSize: '10px',
+    pointerEvents: 'none',
+    opacity: 0.8,
+  },
+  navLoading: {
+    color: '#CCFBF1',
+    fontSize: '13px',
+    fontStyle: 'italic',
+  },
+
+  headerRight: {
+    flex: '1 1 20%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'flex-end',
+    gap: '0.75rem',
+  },
+  actionBtn: {
+    background: 'rgba(255,255,255,0.15)',
+    color: '#FFFFFF',
+    border: '1px solid rgba(255,255,255,0.3)',
+    borderRadius: '8px',
+    padding: '0.5rem 1rem',
+    fontSize: '13px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    backdropFilter: 'blur(4px)',
+  },
+  pdfWrap: {
+    background: 'rgba(255,255,255,0.15)',
+    border: '1px solid rgba(255,255,255,0.3)',
+    borderRadius: '8px',
+    backdropFilter: 'blur(4px)',
+    display: 'flex',
+  },
+
+  // ── Main Content ──
+  main: {
+    maxWidth: '1350px',
+    margin: '2.5rem auto 0',
+    padding: '0 1.5rem',
+  },
+  card: {
+    background: '#FFFFFF',
+    borderRadius: '16px',
+    boxShadow: '0 10px 40px -10px rgba(15, 118, 110, 0.08)',
+    border: '1px solid #E2E8F0',
+    overflow: 'hidden',
+    position: 'relative',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+  cardTop: {
+    padding: '1.5rem',
+    borderBottom: '1px solid #F1F5F9',
+    background: 'linear-gradient(to bottom, #FFFFFF 0%, #F8FAFC 100%)',
     display: 'flex',
     flexDirection: 'column',
     gap: '1rem',
   },
 
-  // ── Search bar ────────────────────────────────────────────────────────────
   searchWrap: {
     position: 'relative',
-    display: 'flex',
-    alignItems: 'center',
+    maxWidth: '500px',
   },
   searchIcon: {
     position: 'absolute',
-    left: '0.9rem',
-    fontSize: '0.9rem',
+    left: '1rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
+    color: '#94A3B8',
+    fontSize: '14px',
     pointerEvents: 'none',
-    color: '#AAAAAA',
   },
   searchInput: {
     width: '100%',
-    padding: '0.65rem 2.8rem 0.65rem 2.5rem',
+    background: '#FFFFFF',
+    border: '1px solid #CBD5E1',
+    padding: '0.65rem 2.5rem 0.65rem 2.5rem',
+    borderRadius: '10px',
     fontSize: '14px',
-    border: '1.5px solid #E0E0E0',
-    borderRadius: '6px',
+    color: '#1E293B',
     outline: 'none',
-    color: '#333333',
-    background: '#FAFAFA',
-    fontFamily: 'inherit',
-    transition: 'border-color 0.2s, box-shadow 0.2s',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.02) inset',
   },
   clearBtn: {
     position: 'absolute',
-    right: '0.85rem',
+    right: '0.8rem',
+    top: '50%',
+    transform: 'translateY(-50%)',
     background: 'none',
     border: 'none',
+    color: '#94A3B8',
     cursor: 'pointer',
-    color: '#AAAAAA',
-    fontSize: '0.85rem',
     padding: '0.2rem',
-    lineHeight: 1,
+  },
+
+  infoBanner: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
+    fontSize: '12.5px',
+    color: '#64748B',
+    padding: '0.5rem 0.75rem',
+    background: '#F0FDFA',
+    borderRadius: '8px',
+    borderLeft: '3px solid #14B8A6',
+  },
+  infoIcon: {
+    fontSize: '14px',
   },
   searchMeta: {
     fontSize: '12px',
-    color: '#888888',
-    margin: '-0.4rem 0 0',
+    color: '#64748B',
+    margin: '0',
+    padding: '0.5rem 1.5rem 0',
   },
 
-  // ── Toolbar (table title + actions) ──────────────────────────────────────
-  toolbar: {
+  tableSection: {
+    padding: '0', 
+    width: '100%',
+  },
+
+  loadingState: {
+    padding: '4rem 0',
     display: 'flex',
-    justifyContent: 'space-between',
+    flexDirection: 'column',
     alignItems: 'center',
-    paddingBottom: '1rem',
-    borderBottom: '1px solid #E0E0E0',
-    flexWrap: 'wrap',
-    gap: '0.75rem',
-  },
-  tableTitle: {
-    margin: 0,
-    fontSize: '18px',
-    fontWeight: '700',
-    color: '#111111',
-  },
-  highlight: {
-    color: '#008080',
-    textTransform: 'capitalize',
-    fontWeight: '700',
-  },
-  actions: {
-    display: 'flex',
-    gap: '0.75rem',
-  },
-  secondaryButton: {
-    background: '#F5F5F5',
-    color: '#444444',
-    border: '1px solid #E0E0E0',
-    padding: '0.5rem 1.1rem',
-    fontSize: '13px',
-    borderRadius: '6px',
-    cursor: 'pointer',
+    gap: '1rem',
+    color: '#0F766E',
+    fontSize: '14px',
     fontWeight: '500',
-    fontFamily: 'inherit',
-    transition: 'background 0.15s',
+  },
+  spinner: {
+    width: '30px',
+    height: '30px',
+    border: '3px solid #CCFBF1',
+    borderTop: '3px solid #0F766E',
+    borderRadius: '50%',
+    animation: 'spin 1s linear infinite',
   },
 
-  // ── Hint banner ───────────────────────────────────────────────────────────
-  hint: {
-    fontSize: '12.5px',
-    color: '#555555',
-    background: '#F0FAFA',
-    border: '1px solid #B2DFDF',
-    borderRadius: '6px',
-    padding: '0.55rem 1rem',
-    margin: '0.25rem 0',
-  },
-
-  // ── Error / status ────────────────────────────────────────────────────────
-  error: {
-    color: '#c0392b',
+  emptyState: {
+    padding: '6rem 0',
     textAlign: 'center',
-    padding: '1rem',
-    background: '#fdecea',
-    borderRadius: '6px',
-    marginBottom: '1.5rem',
-    fontWeight: '500',
-    fontSize: '14px',
-    margin: '0 2rem 1.5rem',
-    border: '1px solid #f5c6c2',
+    color: '#64748B',
+    fontSize: '15px',
   },
-  mutedText: {
-    color: '#999999',
-    fontStyle: 'italic',
-    fontSize: '14px',
-  },
-  emptyText: {
-    color: '#999999',
+  emptyIcon: {
+    fontSize: '48px',
     marginBottom: '1rem',
-    fontSize: '13px',
+    opacity: 0.6,
   },
-  loadingText: {
-    color: '#666666',
+
+  errorBanner: {
+    background: '#FEF2F2',
+    color: '#B91C1C',
+    padding: '1rem 1.5rem',
+    borderRadius: '10px',
+    marginBottom: '1.5rem',
+    border: '1px solid #FECACA',
     fontSize: '14px',
+    fontWeight: '500',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '0.5rem',
   },
 };
 
