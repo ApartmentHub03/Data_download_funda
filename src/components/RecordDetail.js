@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
+import LOGO_BASE64 from './logoBase64';
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
@@ -269,54 +270,53 @@ function RecordDetail({ record, tableName, onBack }) {
     record.id ||
     'Record Details';
 
-  // ── PDF Generation — Funda Property Brochure Style ───────────────────────────
+  // ── PDF Generation — ApartmentHub Brochure (landscape letter) ────────────────
   const handleDownloadPDF = async () => {
     setIsGenerating(true);
     try {
-      const doc = new jsPDF('p', 'mm', 'a4');
-      const pageW = doc.internal.pageSize.getWidth();
-      const pageH = doc.internal.pageSize.getHeight();
-      
-      const BG_COLOR = [42, 90, 93];
-      const COPPER   = [212, 120, 32];
-      const WHITE    = [255, 255, 255];
+      // Landscape letter format matching the brochure template (792 x 612 pt)
+      const doc = new jsPDF('l', 'pt', 'letter');
+      const W = doc.internal.pageSize.getWidth();   // 792
+      const H = doc.internal.pageSize.getHeight();   // 612
 
-      // Automatically fill every new page with the dark cyan background
-      const originalAddPage = doc.addPage.bind(doc);
-      doc.addPage = function(...args) {
-        originalAddPage(...args);
-        doc.setFillColor(...BG_COLOR);
-        doc.rect(0, 0, pageW, pageH, 'F');
+      // ── Brand colours ─────────────────────────────────────────
+      const TEAL      = [42, 90, 93];
+      const DARK_TEAL = [32, 68, 70];
+      const WHITE     = [255, 255, 255];
+
+      // Fields to exclude from customer-facing brochure
+      const EXCLUDED = new Set([
+        'id', 'external_id', 'global_id',
+        'publication_date', 'published_date', 'publication_at', 'published_at',
+        'created_at', 'updated_at', 'createdAt', 'updatedAt', 'created', 'updated',
+      ]);
+
+      // Auto-fill teal background on every new page
+      const _addPage = doc.addPage.bind(doc);
+      doc.addPage = function (...a) {
+        _addPage(...a);
+        doc.setFillColor(...TEAL);
+        doc.rect(0, 0, W, H, 'F');
         return this;
       };
 
-      const margin = 14;
-      const contentW = pageW - margin * 2;
-
-      // ── Brand colours ─────────────────────────────────────────────────────────
-      // ── Collect images ────────────────────────────────────────────────────────
+      // ── Collect & load images ─────────────────────────────────
       const imageUrls = collectImageUrls(record);
-
-      // Pre-load all images (cap at 12 to keep PDF size manageable)
-      const MAX_IMAGES = 12;
       const loadedImages = [];
-      for (const url of imageUrls.slice(0, MAX_IMAGES)) {
+      for (const url of imageUrls.slice(0, 24)) {
         const img = await loadImageAsBase64(url);
         if (img) loadedImages.push(img);
       }
 
-      // ── Key features: pull from features/kenmerken field if available ─────────
+      // ── Key features extraction ───────────────────────────────
       const featuresRaw =
-        record.features ||
-        record.kenmerken ||
-        record.key_features ||
-        record.highlights ||
-        null;
+        record.features || record.kenmerken ||
+        record.key_features || record.highlights || null;
 
       const keyFeatureLines = (() => {
         if (!featuresRaw) return [];
         if (typeof featuresRaw === 'string') {
-          return featuresRaw.split(/\n|,|;/).map(s => s.trim()).filter(Boolean).slice(0, 16);
+          return featuresRaw.split(/\n|,|;/).map(s => s.trim()).filter(Boolean).slice(0, 18);
         }
         if (Array.isArray(featuresRaw)) {
           return featuresRaw.flatMap(f => {
@@ -339,290 +339,225 @@ function RecordDetail({ record, tableName, onBack }) {
               return [f.title, ...subs.map(s => `  ${s}`)];
             }
             return [];
-          }).slice(0, 18);
+          }).slice(0, 20);
         }
         return [];
       })();
 
-      // ── Price / asking price ──────────────────────────────────────────────────
+      // ── Price ─────────────────────────────────────────────────
       const priceRaw =
-        record.price ||
-        record.asking_price ||
-        record.prijs ||
-        record.koopprijs ||
-        '';
+        record.price || record.asking_price ||
+        record.prijs || record.koopprijs || '';
       const priceStr = priceRaw ? String(priceRaw) : '';
 
-      // ═════════════════════════════════════════════════════════════════════════
-      // PAGE 1 — COVER: dark teal background, copper lines, map/image, features
-      // ═════════════════════════════════════════════════════════════════════════
-      // fill entire page with background (for the VERY FIRST page)
-      doc.setFillColor(...BG_COLOR);
-      doc.rect(0, 0, pageW, pageH, 'F');
-
-      // Copper accent lines
-      doc.setDrawColor(...COPPER);
-      doc.setLineWidth(0.6);
-      
-      // Vertical copper line on the left
-      const vLineX = margin + 4;
-      doc.line(vLineX, 15, vLineX, 90);
-
-      // Horizontal copper line
-      const hLineY = 32;
-      doc.line(vLineX - 5, hLineY, pageW, hLineY);
-
-      // The user requested to remove the APARTMENTHUB name and logo
-
-      // "Key features" heading on the right
-      doc.setFontSize(18);
-      doc.setFont(undefined, 'normal');
-      doc.text('Key features', pageW * 0.65, hLineY - 6);
-
-      // Image box (Map) below the horizontal line
-      const imgPadX = margin + 10;
-      const imgPadY = hLineY + 6;
-      const imgW = (pageW * 0.55);
-      const imgH = pageH - imgPadY - 15;
-
-      if (loadedImages.length > 0) {
-        const mapImg = loadedImages[0];
-        doc.addImage(mapImg.data, 'JPEG', imgPadX, imgPadY, imgW, imgH);
+      // ── Helper: draw an image cover-fitted into a rectangular cell ──
+      function drawCoverImage(img, cx, cy, cw, ch, maskColor) {
+        const mc = maskColor || TEAL;
+        let iW, iH;
+        if (cw / ch > img.ratio) {
+          iW = cw; iH = cw / img.ratio;
+        } else {
+          iH = ch; iW = ch * img.ratio;
+        }
+        const iX = cx + (cw - iW) / 2;
+        const iY = cy + (ch - iH) / 2;
+        doc.addImage(img.data, 'JPEG', iX, iY, iW, iH);
+        // Mask overflow with background colour
+        doc.setFillColor(...mc);
+        if (iX < cx)
+          doc.rect(iX - 1, iY - 1, cx - iX + 1, iH + 2, 'F');
+        if (iX + iW > cx + cw)
+          doc.rect(cx + cw, iY - 1, iX + iW - cx - cw + 1, iH + 2, 'F');
+        if (iY < cy)
+          doc.rect(Math.min(iX, cx) - 1, iY - 1, Math.max(iW, cw) + 2, cy - iY + 1, 'F');
+        if (iY + iH > cy + ch)
+          doc.rect(Math.min(iX, cx) - 1, cy + ch, Math.max(iW, cw) + 2, iY + iH - cy - ch + 1, 'F');
       }
 
-      // Feature bullets on the right
-      const rightX = imgPadX + imgW + 12;
-      
+      // ═══════════════════════════════════════════════════════════════════════
+      // PAGE 1 — COVER: logo, address, price, hero image, contact info
+      // ═══════════════════════════════════════════════════════════════════════
+      doc.setFillColor(...TEAL);
+      doc.rect(0, 0, W, H, 'F');
+
+      // Calculate title layout first (may wrap for long addresses)
+      doc.setFontSize(28);
+      doc.setFont('helvetica', 'bold');
+      const titleLines = doc.splitTextToSize(String(recordTitle), W - 100);
+      const titleBaseY = 130;
+      const titleLineH = 34;
+      const titleBottomY = titleBaseY + (titleLines.length - 1) * titleLineH;
+      const coverImgTop = Math.max(150, titleBottomY + 10);
+
+      // Hero property image (covers bottom portion of page)
+      if (loadedImages.length > 0) {
+        drawCoverImage(loadedImages[0], 0, coverImgTop, W, H - coverImgTop, TEAL);
+      }
+
+      // Re-fill teal band above image for clean logo / address area
+      doc.setFillColor(...TEAL);
+      doc.rect(0, 0, W, coverImgTop, 'F');
+
+      // Logo centred at top (square, 90 x 90 pt)
+      const logoSize = 90;
+      doc.addImage(LOGO_BASE64, 'PNG', (W - logoSize) / 2, 18, logoSize, logoSize);
+
+      // Address heading
+      doc.setTextColor(...WHITE);
+      doc.setFontSize(28);
+      doc.setFont('helvetica', 'bold');
+      doc.text(titleLines, W / 2, titleBaseY, { align: 'center' });
+
+      // Rental price (on the image area)
+      if (priceStr) {
+        doc.setFontSize(16);
+        doc.text(priceStr, W / 2, coverImgTop + 28, { align: 'center' });
+      }
+
+      // Contact info at bottom-left (with subtle scrim for readability)
+      doc.setGState(new doc.GState({ opacity: 0.4 }));
+      doc.setFillColor(0, 0, 0);
+      doc.roundedRect(10, H - 110, 200, 100, 5, 5, 'F');
+      doc.setGState(new doc.GState({ opacity: 1 }));
+
+      doc.setTextColor(...WHITE);
+      doc.setFontSize(10);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Korte leidsedwarsstraat', 21, H - 90);
+      doc.text('12 Amsterdam 1017PB', 21, H - 74);
+      doc.text('https://apartmenthub.nl', 21, H - 58);
+      doc.text('+31658975449', 21, H - 42);
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // PAGE 2 — KEY FEATURES: image left, features right, bottom strip
+      // ═══════════════════════════════════════════════════════════════════════
+      doc.addPage();
+
+      // Property image on the left ~65% of the page
+      const featImg = loadedImages.length > 1 ? loadedImages[1] : loadedImages[0];
+      if (featImg) {
+        drawCoverImage(featImg, 45, 80, 480, 460, TEAL);
+      }
+
+      // Bottom darker strip
+      doc.setFillColor(...DARK_TEAL);
+      doc.rect(0, 504, W, H - 504, 'F');
+
+      // "Key features" heading
+      doc.setTextColor(...WHITE);
+      doc.setFontSize(22);
+      doc.setFont('helvetica', 'normal');
+      doc.text('Key features', 555, 65);
+
+      // Feature list on the right
       if (keyFeatureLines.length > 0) {
-        doc.setFontSize(10);
-        doc.setFont(undefined, 'normal');
-        let fy = imgPadY + 5;
+        doc.setFontSize(11);
+        let fy = 110;
         for (const line of keyFeatureLines) {
           const isIndented = line.startsWith('  ');
-          const textStr = line.trim();
-          const indentAmt = isIndented ? 6 : 0;
-          
-          doc.setTextColor(...WHITE);
-          // Set opacity for indented lines
+          const text = line.trim();
           if (isIndented) {
-             doc.setTextColor(200, 210, 210);
-          }
-          
-          const maxTextW = pageW - rightX - margin - indentAmt - 5;
-          const wrapped = doc.splitTextToSize(textStr, maxTextW);
-          
-          // Draw bullet
-          if (!isIndented) {
-            doc.setFillColor(...WHITE);
-            doc.circle(rightX + 1.5, fy - 1.2, 0.8, 'F');
+            doc.setTextColor(185, 200, 200);
+            const wrapped = doc.splitTextToSize(text, W - 560 - 15);
+            doc.text(wrapped, 560, fy);
+            fy += wrapped.length * 14 + 2;
           } else {
-            // Indented hyphen
-            doc.text('-', rightX + indentAmt, fy);
+            doc.setTextColor(...WHITE);
+            doc.setFillColor(...WHITE);
+            doc.circle(550, fy - 3, 2, 'F');
+            const wrapped = doc.splitTextToSize(text, W - 560 - 15);
+            doc.text(wrapped, 560, fy);
+            fy += wrapped.length * 14 + 8;
           }
-          
-          doc.text(wrapped, rightX + indentAmt + 4, fy);
-          fy += wrapped.length * 5 + (isIndented ? 1 : 3);
-          if (fy > pageH - 20) break;
+          if (fy > 585) break;
         }
       } else {
-        // Fallback text entries
-        const textEntries = entries.filter(([, v]) => {
+        // Fallback: show scalar text entries as features
+        const textEntries = entries.filter(([k, v]) => {
+          if (EXCLUDED.has(k)) return false;
           if (!v || (typeof v === 'string' && isUrl(v))) return false;
-          if (Array.isArray(v) && v.every(i => isUrl(String(i)))) return false;
+          if (Array.isArray(v)) return false;
+          if (typeof v === 'object') return false;
           return typeof v === 'string' || typeof v === 'number';
-        }).slice(0, 14);
+        }).slice(0, 16);
 
-        doc.setFontSize(10);
-        doc.setFont(undefined, 'normal');
-        let fy = imgPadY + 5;
+        doc.setFontSize(11);
+        let fy = 110;
         for (const [k, v] of textEntries) {
           doc.setTextColor(...WHITE);
           doc.setFillColor(...WHITE);
-          doc.circle(rightX + 1.5, fy - 1.2, 0.8, 'F');
-          
-          const textStr = `${k.replace(/_/g, ' ').toUpperCase()}: ${String(v).substring(0, 45)}`;
-          const wrapped = doc.splitTextToSize(textStr, pageW - rightX - margin - 5);
-          
-          doc.text(wrapped, rightX + 4, fy);
-          fy += wrapped.length * 5 + 3;
-          if (fy > pageH - 20) break;
+          doc.circle(550, fy - 3, 2, 'F');
+          const text = `${k.replace(/_/g, ' ')}: ${String(v).substring(0, 50)}`;
+          doc.text(text, 560, fy);
+          fy += 28;
+          if (fy > 585) break;
         }
       }
-      // ═════════════════════════════════════════════════════════════════════════
-      if (loadedImages.length > 1) {
-        doc.addPage();
 
-        const heroImg = loadedImages[1] || loadedImages[0];
-
-        // Full-page image (cropped center)
-        const heroH = pageH * 0.62;
-        const heroAR = heroImg.ratio;
-        let hW = pageW, hH = pageW / heroAR;
-        if (hH < heroH) { hH = heroH; hW = heroH * heroAR; }
-        const hOffX = (pageW - hW) / 2;
-        doc.addImage(heroImg.data, 'JPEG', hOffX, 0, hW, hH);
-
-        // Dark scrim over hero
-        doc.setGState(new doc.GState({ opacity: 0.45 }));
-        doc.setFillColor(0, 0, 0);
-        doc.rect(0, 0, pageW, heroH, 'F');
-        doc.setGState(new doc.GState({ opacity: 1 }));
-
-        // Address on hero
-        doc.setTextColor(...WHITE);
-        doc.setFontSize(20);
-        doc.setFont(undefined, 'bold');
-        doc.text(String(recordTitle).substring(0, 50), margin, heroH - 22, { maxWidth: contentW });
-
-        if (priceStr) {
-          doc.setFontSize(11);
-          doc.setFont(undefined, 'normal');
-          doc.text(priceStr, margin, heroH - 12);
-        }
-
-        // Info strip below hero image
-        const stripY = heroH;
-        const stripH = pageH - heroH - 9;
-
-        doc.setFillColor(...BG_COLOR); // Changed from LGRAY to BG_COLOR
-        doc.rect(0, stripY, pageW, stripH, 'F');
-
-        // Show a few key text fields in the strip
-        const stripEntries = entries.filter(([, v]) => {
-          if (!v) return false;
-          if (typeof v === 'string' && isUrl(v)) return false;
-          if (Array.isArray(v)) return false;
-          if (typeof v === 'object') return false;
-          return true;
-        }).slice(0, 5);
-
-        const colW = contentW / Math.max(stripEntries.length, 1);
-        let sx = margin;
-        const sy = stripY + 10;
-
-        for (const [k, v] of stripEntries) {
-          doc.setTextColor(200, 220, 220); // Changed from MGRAY
-          doc.setFontSize(6.5);
-          doc.setFont(undefined, 'normal');
-          doc.text(k.replace(/_/g, ' ').toUpperCase(), sx, sy);
-          doc.setTextColor(...WHITE); // Changed from DARK
-          doc.setFontSize(9);
-          doc.setFont(undefined, 'bold');
-          doc.text(String(v).substring(0, 22), sx, sy + 6);
-          // vertical separator
-          if (sx + colW < pageW - margin) {
-            doc.setDrawColor(...COPPER); // Changed from 210, 215, 225 to COPPER
-            doc.setLineWidth(0.3);
-            doc.line(sx + colW - 2, sy - 3, sx + colW - 2, sy + 12);
-          }
-          sx += colW;
-        }
-
-        // No footer bar
-      }
-
-      // ═════════════════════════════════════════════════════════════════════════
-      // PAGE 3+ — PHOTO GALLERY: 2 × 2 mosaic per page, teal watermark
-      // ═════════════════════════════════════════════════════════════════════════
+      // ═══════════════════════════════════════════════════════════════════════
+      // GALLERY PAGES — 2 x 2 grid per page (no logo on image pages)
+      // ═══════════════════════════════════════════════════════════════════════
       const galleryStart = loadedImages.length > 1 ? 2 : 1;
       const galleryImages = loadedImages.slice(galleryStart);
+      const PER_PAGE = 4;
 
-      if (galleryImages.length > 0) {
-        const COLS = 2, ROWS = 3; // 3 rows x 2 cols = 6 landscape-ish images
-        const perPage = COLS * ROWS;
-        const gap = 12;
-        const mgX = 22; // left/right margin
-        const mgYTop = 38; // big top margin
-        const mgYBot = 28;
-        
-        const cellW = (pageW - mgX * 2 - gap) / 2;
-        const cellH = (pageH - mgYTop - mgYBot - gap * (ROWS - 1)) / ROWS;
+      // Cell positions (from template analysis: 792 x 612 pt landscape letter)
+      const cells = [
+        { x: 43, y: 52, w: 348, h: 261 },  // top-left
+        { x: 403, y: 52, w: 348, h: 261 }, // top-right
+        { x: 43, y: 345, w: 348, h: 261 }, // bottom-left
+        { x: 403, y: 345, w: 348, h: 261 },// bottom-right
+      ];
 
-        for (let i = 0; i < galleryImages.length; i += perPage) {
-          doc.addPage(); // background automatically filled via addPage hook
+      for (let i = 0; i < galleryImages.length; i += PER_PAGE) {
+        doc.addPage();
 
-          // Copper cross line & edge lines
-          doc.setDrawColor(...COPPER);
-          doc.setLineWidth(0.6);
-          // Left track line
-          doc.line(7, mgYTop, 7, pageH - mgYBot);
-          // Right track line
-          doc.line(pageW - 7, mgYTop, pageW - 7, pageH - mgYBot);
-          
-          // Center vertical cross line
-          const midX = mgX + cellW + gap / 2;
-          doc.line(midX, mgYTop - 3, midX, pageH - mgYBot + 3);
-          
-          // Horizontal cross lines for each row gap
-          for (let r = 1; r < ROWS; r++) {
-            const midY = mgYTop + r * cellH + (r - 0.5) * gap;
-            doc.line(mgX - 3, midY, pageW - mgX + 3, midY);
-          }
+        // Decorative side lines (matching template)
+        doc.setDrawColor(160, 175, 170);
+        doc.setLineWidth(1.5);
+        doc.line(28, 52, 28, 606);      // left
+        doc.line(768, 0, 768, 416);     // right
 
-          const chunk = galleryImages.slice(i, i + perPage);
-          for (let j = 0; j < chunk.length; j++) {
-            const col = j % COLS;
-            const row = Math.floor(j / COLS);
-            const cx = mgX + col * (cellW + gap);
-            const cy = mgYTop + row * (cellH + gap);
-            const img = chunk[j];
-
-            // Setup underlying cell clip boundaries
-            // (Since jsPDF clipping is buggy, we'll over-scale the image then draw thick frames of BG_COLOR around it)
-            let iW = cellW, iH = cellW / img.ratio;
-            if (iH < cellH) { iH = cellH; iW = cellH * img.ratio; }
-            const iOffX = cx + (cellW - iW) / 2;
-            const iOffY = cy + (cellH - iH) / 2;
-
-            doc.addImage(img.data, 'JPEG', iOffX, iOffY, iW, iH);
-
-            // Use the dark background color for the clip masking so it seamlessly vanishes into the background
-            doc.setFillColor(...BG_COLOR);
-            
-            // Mask Left
-            if (iOffX < cx) doc.rect(iOffX - 1, iOffY - 1, (cx - iOffX) + 1, iH + 2, 'F');
-            // Mask Right
-            const iRight = iOffX + iW;
-            const cRight = cx + cellW;
-            if (iRight > cRight) doc.rect(cRight, iOffY - 1, (iRight - cRight) + 1, iH + 2, 'F');
-            // Mask Top
-            if (iOffY < cy) doc.rect(Math.min(iOffX, cx) - 1, iOffY - 1, Math.max(iW, cellW) + 2, (cy - iOffY) + 1, 'F');
-            // Mask Bottom
-            const iBot = iOffY + iH;
-            const cBot = cy + cellH;
-            if (iBot > cBot) doc.rect(Math.min(iOffX, cx) - 1, cBot, Math.max(iW, cellW) + 2, (iBot - cBot) + 1, 'F');
-
-            // Draw a smooth thin rounded border to give it a polished photo card feel
-            doc.setDrawColor(200, 210, 205); // light grayish-teal border
-            doc.setLineWidth(0.4);
-            doc.roundedRect(cx, cy, cellW, cellH, 4, 4);
-          }
+        const chunk = galleryImages.slice(i, i + PER_PAGE);
+        for (let j = 0; j < chunk.length; j++) {
+          const c = cells[j];
+          drawCoverImage(chunk[j], c.x, c.y, c.w, c.h, TEAL);
         }
       }
 
-      // ═════════════════════════════════════════════════════════════════════════
-      // FINAL PAGE — DETAILS TABLE (teal header stripe)
-      // ═════════════════════════════════════════════════════════════════════════
-      // Details page
-      doc.addPage(); // background colored automatically via addPage hook
-      
+      // ═══════════════════════════════════════════════════════════════════════
+      // FINAL PAGE — PROPERTY DETAILS (filtered, no IDs / timestamps)
+      // ═══════════════════════════════════════════════════════════════════════
+      doc.addPage();
+
+      // Logo on details page (no property images, so logo is shown)
+      const detLogoSize = 55;
+      doc.addImage(LOGO_BASE64, 'PNG', W - detLogoSize - 25, 12, detLogoSize, detLogoSize);
+
       doc.setTextColor(...WHITE);
-      doc.setFontSize(16);
-      doc.setFont(undefined, 'bold');
-      doc.text('Property Details', margin, 22);
+      doc.setFontSize(18);
+      doc.setFont('helvetica', 'bold');
+      doc.text('Property Details', 30, 35);
 
-      // Address sub-header
-      doc.setTextColor(230, 240, 240);
-      doc.setFontSize(10);
-      doc.setFont(undefined, 'normal');
-      doc.text(String(recordTitle).substring(0, 80), margin, 30);
+      // Address & price sub-header
+      doc.setTextColor(220, 235, 235);
+      doc.setFontSize(11);
+      doc.setFont('helvetica', 'normal');
+      doc.text(String(recordTitle).substring(0, 90), 30, 55);
+      if (priceStr) doc.text(priceStr, 30, 72);
 
-      // Details table
+      // Filtered details table
       const textRows = entries
-        .filter(([, v]) => {
+        .filter(([k, v]) => {
+          if (EXCLUDED.has(k)) return false;
           if (v === null || v === undefined) return true;
           if (typeof v === 'string' && isUrl(v)) return false;
           if (Array.isArray(v) && v.length > 0 && v.every(i => isUrl(String(i)))) return false;
+          return true;
+        })
+        .filter(([, v]) => {
+          // Remove empty / null values to avoid blank rows
+          if (v === null || v === undefined || v === '') return false;
           return true;
         })
         .map(([k, v]) => [
@@ -631,7 +566,7 @@ function RecordDetail({ record, tableName, onBack }) {
         ]);
 
       autoTable(doc, {
-        startY: 38,
+        startY: 85,
         head: [['Field', 'Value']],
         body: textRows,
         theme: 'plain',
@@ -639,33 +574,26 @@ function RecordDetail({ record, tableName, onBack }) {
           textColor: WHITE,
           fontStyle: 'bold',
           fontSize: 10,
-          cellPadding: { top: 4, bottom: 4, left: 5, right: 5 },
+          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 },
         },
         columnStyles: {
-          0: { fontStyle: 'bold', cellWidth: 58, textColor: WHITE },
-          1: { cellWidth: contentW - 58, textColor: [220, 230, 230] },
+          0: { fontStyle: 'bold', cellWidth: 170, textColor: WHITE },
+          1: { cellWidth: W - 60 - 170, textColor: [220, 230, 230] },
         },
         styles: {
-          fontSize: 8.5,
-          cellPadding: { top: 3.5, bottom: 3.5, left: 5, right: 5 },
+          fontSize: 9,
+          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 },
           overflow: 'linebreak',
-          lineColor: [60, 110, 115], // subtle teal separators
-          lineWidth: 0.2, // border bottom only
+          lineColor: [60, 110, 115],
+          lineWidth: 0.2,
         },
-        drawRow: (hookData) => {
-          // Draw a subtle border below each row
-          doc.setDrawColor(60, 110, 115);
-          doc.setLineWidth(0.2);
-          const y = hookData.row.y + hookData.row.height;
-          doc.line(hookData.settings.margin.left, y, pageW - hookData.settings.margin.right, y);
-        },
-        margin: { top: 37, right: margin, bottom: 14, left: margin },
+        margin: { top: 85, right: 30, bottom: 30, left: 30 },
       });
 
-      // (footer bars drawn inline per page above)
-
-      const safeName = String(record.external_id || record.id || 'record').replace(/[^a-z0-9]/gi, '-');
-      doc.save(`${tableName || 'record'}-${safeName}.pdf`);
+      // Save PDF
+      const safeName = String(record.address || record.adres || record.external_id || record.id || 'apartment')
+        .replace(/[^a-z0-9]/gi, '-').substring(0, 40);
+      doc.save(`${tableName || 'apartment'}-${safeName}-brochure.pdf`);
     } catch (err) {
       console.error('PDF generation error:', err);
       alert('Could not generate PDF. Error: ' + err.message);
