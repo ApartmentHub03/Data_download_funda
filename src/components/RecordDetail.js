@@ -347,7 +347,10 @@ function RecordDetail({ record, tableName, onBack }) {
       // ── Price ─────────────────────────────────────────────────
       const priceRaw =
         record.price || record.asking_price ||
-        record.prijs || record.koopprijs || '';
+        record.selling_price || record.rental_price ||
+        record.prijs || record.koopprijs || record.huurprijs ||
+        record.verkoopprijs || record.rent ||
+        '';
       const priceStr = priceRaw ? String(priceRaw) : '';
 
       // ── Helper: draw an image cover-fitted into a rectangular cell ──
@@ -380,27 +383,38 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.setFillColor(...TEAL);
       doc.rect(0, 0, W, H, 'F');
 
-      // Calculate title layout first (may wrap for long addresses)
+      // Logo centred at top (wide format, ratio ~2.46)
+      const logoH = 65;
+      const logoW = logoH * 2.458;
+      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 18, logoW, logoH);
+
+      // Calculate title + price layout (may wrap for long addresses)
       doc.setFontSize(28);
       doc.setFont('helvetica', 'bold');
       const titleLines = doc.splitTextToSize(String(recordTitle), W - 100);
-      const titleBaseY = 130;
+      const titleBaseY = 120;
       const titleLineH = 34;
       const titleBottomY = titleBaseY + (titleLines.length - 1) * titleLineH;
-      const coverImgTop = Math.max(150, titleBottomY + 10);
+
+      // Price immediately below property name
+      let priceBottomY = titleBottomY;
+      if (priceStr) {
+        priceBottomY = titleBottomY + 28;
+      }
+
+      const coverImgTop = Math.max(160, priceBottomY + 12);
 
       // Hero property image (covers bottom portion of page)
       if (loadedImages.length > 0) {
         drawCoverImage(loadedImages[0], 0, coverImgTop, W, H - coverImgTop, TEAL);
       }
 
-      // Re-fill teal band above image for clean logo / address area
+      // Re-fill teal band above image for clean logo / address / price area
       doc.setFillColor(...TEAL);
       doc.rect(0, 0, W, coverImgTop, 'F');
 
-      // Logo centred at top (square, 90 x 90 pt)
-      const logoSize = 90;
-      doc.addImage(LOGO_BASE64, 'PNG', (W - logoSize) / 2, 18, logoSize, logoSize);
+      // Re-draw logo on top of teal band
+      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 18, logoW, logoH);
 
       // Address heading
       doc.setTextColor(...WHITE);
@@ -408,10 +422,11 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.setFont('helvetica', 'bold');
       doc.text(titleLines, W / 2, titleBaseY, { align: 'center' });
 
-      // Rental price (on the image area)
+      // Price below property name
       if (priceStr) {
         doc.setFontSize(16);
-        doc.text(priceStr, W / 2, coverImgTop + 28, { align: 'center' });
+        doc.setFont('helvetica', 'bold');
+        doc.text(priceStr, W / 2, titleBottomY + 24, { align: 'center' });
       }
 
       // Contact info at bottom-left (with subtle scrim for readability)
@@ -531,8 +546,9 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.addPage();
 
       // Logo on details page (no property images, so logo is shown)
-      const detLogoSize = 55;
-      doc.addImage(LOGO_BASE64, 'PNG', W - detLogoSize - 25, 12, detLogoSize, detLogoSize);
+      const detLogoH = 35;
+      const detLogoW = detLogoH * 2.458;
+      doc.addImage(LOGO_BASE64, 'PNG', W - detLogoW - 25, 12, detLogoW, detLogoH);
 
       doc.setTextColor(...WHITE);
       doc.setFontSize(18);
