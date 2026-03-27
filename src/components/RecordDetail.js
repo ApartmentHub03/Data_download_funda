@@ -170,15 +170,30 @@ function SmartValue({ fieldKey, value }) {
   return <DeepValue value={value} fieldKey={fieldKey || ''} />;
 }
 
+// Check if a URL looks like an image (by extension or known CDN patterns)
+function isImageUrl(url) {
+  if (typeof url !== 'string') return false;
+  const lower = url.toLowerCase();
+  // Common image extensions
+  if (/\.(jpe?g|png|gif|webp|bmp|svg|tiff?|avif)(\?|$)/i.test(lower)) return true;
+  // Known image CDN/hosting patterns
+  if (/cloud\.funda\.nl|imgur|cloudinary|unsplash|images\.|img\.|cdn\.|media\.|photos\./i.test(lower)) return true;
+  // Reject known non-image URLs
+  if (/funda\.nl\/(detail|koop|huur)|google\.(nl|com)\/maps|maps\.google/i.test(lower)) return false;
+  // Reject URLs that look like web pages (no extension or .html/.php/.aspx)
+  if (/\.(html?|php|aspx?|jsp)\b/i.test(lower)) return false;
+  return true;
+}
+
 // ─── Collect all image URLs from a record ───────────────────────────────────
 function collectImageUrls(record) {
   const urls = [];
   for (const value of Object.values(record)) {
-    if (typeof value === 'string' && isUrl(value)) {
+    if (typeof value === 'string' && isUrl(value) && isImageUrl(value)) {
       urls.push(value);
     } else if (Array.isArray(value)) {
       for (const item of value) {
-        if (typeof item === 'string' && isUrl(item)) urls.push(item);
+        if (typeof item === 'string' && isUrl(item) && isImageUrl(item)) urls.push(item);
       }
     }
   }
@@ -208,10 +223,11 @@ function flattenForPDF(value, depth) {
         if (Array.isArray(section.subfeatures)) {
           section.subfeatures.forEach(sf => {
             if (typeof sf === 'object' && sf !== null) {
-              const sfParts = Object.entries(sf)
-                .filter(([, v]) => v !== null && v !== undefined)
-                .map(([k, v]) => `${k.replace(/_/g, ' ')}: ${v}`);
-              if (sfParts.length) lines.push('  • ' + sfParts.join(', '));
+              const label = sf.title || sf.label || sf.name || '';
+              const val = sf.value != null ? String(sf.value) : '';
+              if (label && val) lines.push(`  • ${label}: ${val}`);
+              else if (label) lines.push(`  • ${label}`);
+              else if (val) lines.push(`  • ${val}`);
             } else {
               lines.push('  • ' + String(sf));
             }
@@ -279,10 +295,10 @@ function RecordDetail({ record, tableName, onBack }) {
       const W = doc.internal.pageSize.getWidth();   // 792
       const H = doc.internal.pageSize.getHeight();   // 612
 
-      // ── Brand colours ─────────────────────────────────────────
+      // ── Brand colours ─────────────────────────────────────
       const TEAL      = [42, 90, 93];
-      const DARK_TEAL = [32, 68, 70];
       const WHITE     = [255, 255, 255];
+      const ORANGE    = [210, 125, 45];
 
       // Fields to exclude from customer-facing brochure
       const EXCLUDED = new Set([
@@ -308,7 +324,7 @@ function RecordDetail({ record, tableName, onBack }) {
         if (img) loadedImages.push(img);
       }
 
-      // ── Key features extraction ───────────────────────────────
+      // ── Key features extraction (clean one-liners) ──────────
       const featuresRaw =
         record.features || record.kenmerken ||
         record.key_features || record.highlights || null;
@@ -316,42 +332,72 @@ function RecordDetail({ record, tableName, onBack }) {
       const keyFeatureLines = (() => {
         if (!featuresRaw) return [];
         if (typeof featuresRaw === 'string') {
-          return featuresRaw.split(/\n|,|;/).map(s => s.trim()).filter(Boolean).slice(0, 18);
+          return featuresRaw.split(/\n|;/).map(s => s.trim()).filter(Boolean).slice(0, 24);
         }
         if (Array.isArray(featuresRaw)) {
-          return featuresRaw.flatMap(f => {
-            if (typeof f === 'string') return [f];
-            if (f && f.title) {
-              const subs = Array.isArray(f.subfeatures)
-                ? f.subfeatures.map(sf => {
-                    if (typeof sf === 'object' && sf !== null) {
-                      return Object.entries(sf)
-                        .filter(([, v]) => v !== null && v !== undefined)
-                        .map(([k, v]) => {
-                          const val = typeof v === 'object' ? flattenForPDF(v, 1) : v;
-                          if (k === 'title' || k === 'label') return String(val);
-                          return `${k.replace(/_/g, ' ')} ${val}`;
-                        }).join(' ');
-                    }
-                    return String(sf);
-                  })
-                : [];
-              return [f.title, ...subs.map(s => `  ${s}`)];
+          // Extract clean one-liner features from nested structure
+          const lines = [];
+          for (const section of featuresRaw) {
+            if (typeof section === 'string') {
+              lines.push(section);
+              continue;
             }
-            return [];
-          }).slice(0, 20);
+            if (!section || typeof section !== 'object') continue;
+            // Each section has subfeatures — extract as "Label: Value" one-liners
+            if (Array.isArray(section.subfeatures)) {
+              for (const sf of section.subfeatures) {
+                if (typeof sf === 'string') { lines.push(sf); continue; }
+                if (!sf || typeof sf !== 'object') continue;
+                const label = sf.title || sf.label || sf.name || '';
+                const val = sf.value != null ? String(sf.value) : '';
+                if (label && val) {
+                  lines.push(`${label}: ${val}`);
+                } else if (label) {
+                  lines.push(label);
+                } else if (val) {
+                  lines.push(val);
+                }
+              }
+            } else if (section.title && section.value != null) {
+              lines.push(`${section.title}: ${section.value}`);
+            } else if (section.title) {
+              lines.push(section.title);
+            }
+          }
+          return lines.filter(l => l.length > 0).slice(0, 30);
         }
         return [];
       })();
 
-      // ── Price ─────────────────────────────────────────────────
+      // ── Price (prefer rental price) ──────────────────────────
       const priceRaw =
+        record.rental_price || record.huurprijs || record.rent ||
         record.price || record.asking_price ||
-        record.selling_price || record.rental_price ||
-        record.prijs || record.koopprijs || record.huurprijs ||
-        record.verkoopprijs || record.rent ||
+        record.selling_price || record.prijs || record.koopprijs ||
+        record.verkoopprijs ||
         '';
-      const priceStr = priceRaw ? String(priceRaw) : '';
+
+      // Determine if rental (per month) or sale price
+      const isRental = !!(record.rental_price || record.huurprijs || record.rent);
+      const isSale = !isRental && !!(record.selling_price || record.asking_price ||
+        record.koopprijs || record.verkoopprijs);
+
+      // Format price with € symbol and period suffix
+      const priceStr = (() => {
+        if (!priceRaw) return '';
+        const raw = String(priceRaw).replace(/[€$£\s]/g, '').replace(/,/g, '');
+        const num = parseFloat(raw);
+        const formatted = !isNaN(num)
+          ? `€ ${num.toLocaleString('nl-NL')}, -`
+          : `€ ${String(priceRaw).replace(/[€$£]/g, '').trim()}`;
+        if (isRental) return `${formatted} excl. Per month`;
+        if (isSale) return `${formatted} kosten koper`;
+        // Check record for period hints
+        const period = record.price_period || record.rental_period || record.periode || '';
+        if (/year|jaar|annual/i.test(String(period))) return `${formatted} Per year`;
+        if (/month|maand/i.test(String(period))) return `${formatted} excl. Per month`;
+        return formatted;
+      })();
 
       // ── Helper: draw an image cover-fitted into a rectangular cell ──
       function drawCoverImage(img, cx, cy, cw, ch, maskColor) {
@@ -383,26 +429,26 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.setFillColor(...TEAL);
       doc.rect(0, 0, W, H, 'F');
 
-      // Logo centred at top (wide format, ratio ~2.46)
+      // Logo centred at top with generous spacing (wide format, ratio ~2.46)
       const logoH = 65;
       const logoW = logoH * 2.458;
-      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 18, logoW, logoH);
+      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 22, logoW, logoH);
 
       // Calculate title + price layout (may wrap for long addresses)
       doc.setFontSize(28);
       doc.setFont('helvetica', 'bold');
       const titleLines = doc.splitTextToSize(String(recordTitle), W - 100);
-      const titleBaseY = 120;
+      const titleBaseY = 135;  // more space after logo
       const titleLineH = 34;
       const titleBottomY = titleBaseY + (titleLines.length - 1) * titleLineH;
 
       // Price immediately below property name
       let priceBottomY = titleBottomY;
       if (priceStr) {
-        priceBottomY = titleBottomY + 28;
+        priceBottomY = titleBottomY + 34;
       }
 
-      const coverImgTop = Math.max(160, priceBottomY + 12);
+      const coverImgTop = Math.max(185, priceBottomY + 18);
 
       // Hero property image (covers bottom portion of page)
       if (loadedImages.length > 0) {
@@ -414,7 +460,7 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.rect(0, 0, W, coverImgTop, 'F');
 
       // Re-draw logo on top of teal band
-      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 18, logoW, logoH);
+      doc.addImage(LOGO_BASE64, 'PNG', (W - logoW) / 2, 22, logoW, logoH);
 
       // Address heading
       doc.setTextColor(...WHITE);
@@ -422,18 +468,21 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.setFont('helvetica', 'bold');
       doc.text(titleLines, W / 2, titleBaseY, { align: 'center' });
 
-      // Price below property name
+      // Price below property name (clean, just the value)
       if (priceStr) {
         doc.setFontSize(16);
-        doc.setFont('helvetica', 'bold');
-        doc.text(priceStr, W / 2, titleBottomY + 24, { align: 'center' });
+        doc.setFont('helvetica', 'normal');
+        doc.setTextColor(220, 235, 235);
+        doc.text(priceStr, W / 2, titleBottomY + 30, { align: 'center' });
       }
 
       // Contact info at bottom-left (with subtle scrim for readability)
-      doc.setGState(new doc.GState({ opacity: 0.4 }));
-      doc.setFillColor(0, 0, 0);
-      doc.roundedRect(10, H - 110, 200, 100, 5, 5, 'F');
-      doc.setGState(new doc.GState({ opacity: 1 }));
+      if (loadedImages.length > 0) {
+        doc.setGState(new doc.GState({ opacity: 0.4 }));
+        doc.setFillColor(0, 0, 0);
+        doc.roundedRect(10, H - 110, 200, 100, 5, 5, 'F');
+        doc.setGState(new doc.GState({ opacity: 1 }));
+      }
 
       doc.setTextColor(...WHITE);
       doc.setFontSize(10);
@@ -444,100 +493,191 @@ function RecordDetail({ record, tableName, onBack }) {
       doc.text('+31658975449', 21, H - 42);
 
       // ═══════════════════════════════════════════════════════════════════════
-      // PAGE 2 — KEY FEATURES: image left, features right, bottom strip
+      // PAGE 2+ — KEY FEATURES: image left, features right, orange accents
       // ═══════════════════════════════════════════════════════════════════════
       doc.addPage();
 
-      // Property image on the left ~65% of the page
+      // Orange accent vertical line (left edge)
+      doc.setDrawColor(...ORANGE);
+      doc.setLineWidth(3);
+      doc.line(25, 0, 25, H);
+
+      // Logo in top-left
+      const featLogoH = 40;
+      const featLogoW = featLogoH * 2.458;
+      doc.addImage(LOGO_BASE64, 'PNG', 40, 15, featLogoW, featLogoH);
+
+      // Orange horizontal line under logo
+      doc.setDrawColor(...ORANGE);
+      doc.setLineWidth(2);
+      doc.line(40, 62, 40 + featLogoW, 62);
+
+      // Property image on the left ~60% of the page
       const featImg = loadedImages.length > 1 ? loadedImages[1] : loadedImages[0];
+      const featImgLeft = 40;
+      const featImgTop = 75;
+      const featImgW = 460;
+      const featImgH = H - featImgTop - 30;
       if (featImg) {
-        drawCoverImage(featImg, 45, 80, 480, 460, TEAL);
+        drawCoverImage(featImg, featImgLeft, featImgTop, featImgW, featImgH, TEAL);
       }
 
-      // Bottom darker strip
-      doc.setFillColor(...DARK_TEAL);
-      doc.rect(0, 504, W, H - 504, 'F');
-
-      // "Key features" heading
+      // "Key features" heading on right
+      const featColX = featImgLeft + featImgW + 25;
+      const featColW = W - featColX - 30;
       doc.setTextColor(...WHITE);
       doc.setFontSize(22);
-      doc.setFont('helvetica', 'normal');
-      doc.text('Key features', 555, 65);
+      doc.setFont('helvetica', 'italic');
+      doc.text('Key features', featColX + featColW / 2, 50, { align: 'center' });
 
-      // Feature list on the right
-      if (keyFeatureLines.length > 0) {
-        doc.setFontSize(11);
-        let fy = 110;
-        for (const line of keyFeatureLines) {
-          const isIndented = line.startsWith('  ');
-          const text = line.trim();
-          if (isIndented) {
-            doc.setTextColor(185, 200, 200);
-            const wrapped = doc.splitTextToSize(text, W - 560 - 15);
-            doc.text(wrapped, 560, fy);
-            fy += wrapped.length * 14 + 2;
-          } else {
-            doc.setTextColor(...WHITE);
-            doc.setFillColor(...WHITE);
-            doc.circle(550, fy - 3, 2, 'F');
-            const wrapped = doc.splitTextToSize(text, W - 560 - 15);
-            doc.text(wrapped, 560, fy);
-            fy += wrapped.length * 14 + 8;
-          }
-          if (fy > 585) break;
-        }
-      } else {
+      // Orange line under "Key features"
+      doc.setDrawColor(...ORANGE);
+      doc.setLineWidth(1.5);
+      doc.line(featColX, 62, featColX + featColW, 62);
+
+      // Feature list — clean one-liner bullet points
+      const featureList = keyFeatureLines.length > 0 ? keyFeatureLines : (() => {
         // Fallback: show scalar text entries as features
-        const textEntries = entries.filter(([k, v]) => {
+        return entries.filter(([k, v]) => {
           if (EXCLUDED.has(k)) return false;
           if (!v || (typeof v === 'string' && isUrl(v))) return false;
           if (Array.isArray(v)) return false;
           if (typeof v === 'object') return false;
           return typeof v === 'string' || typeof v === 'number';
-        }).slice(0, 16);
+        }).slice(0, 20).map(([k, v]) =>
+          `${k.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}: ${String(v).substring(0, 50)}`
+        );
+      })();
 
-        doc.setFontSize(11);
-        let fy = 110;
-        for (const [k, v] of textEntries) {
+      // Draw features with pagination across pages
+      let fy = 90;
+      doc.setFontSize(12);
+      const maxFeatY = H - 40;
+
+      for (let fi = 0; fi < featureList.length; fi++) {
+        const text = featureList[fi];
+        const wrapped = doc.splitTextToSize(text, featColW - 20);
+        const neededH = wrapped.length * 16 + 12;
+
+        // Check if we need a new page
+        if (fy + neededH > maxFeatY && fi > 0) {
+          doc.addPage();
+
+          // Redraw orange vertical line
+          doc.setDrawColor(...ORANGE);
+          doc.setLineWidth(3);
+          doc.line(25, 0, 25, H);
+
+          // Logo
+          doc.addImage(LOGO_BASE64, 'PNG', 40, 15, featLogoW, featLogoH);
+          doc.setDrawColor(...ORANGE);
+          doc.setLineWidth(2);
+          doc.line(40, 62, 40 + featLogoW, 62);
+
+          // Image on left (use next available image or repeat)
+          const imgIdx = Math.min(1 + Math.floor(fi / 12), loadedImages.length - 1);
+          const nextImg = loadedImages[imgIdx] || featImg;
+          if (nextImg) {
+            drawCoverImage(nextImg, featImgLeft, featImgTop, featImgW, featImgH, TEAL);
+          }
+
+          // Re-draw "Key features" header
           doc.setTextColor(...WHITE);
-          doc.setFillColor(...WHITE);
-          doc.circle(550, fy - 3, 2, 'F');
-          const text = `${k.replace(/_/g, ' ')}: ${String(v).substring(0, 50)}`;
-          doc.text(text, 560, fy);
-          fy += 28;
-          if (fy > 585) break;
+          doc.setFontSize(22);
+          doc.setFont('helvetica', 'italic');
+          doc.text('Key features', featColX + featColW / 2, 50, { align: 'center' });
+          doc.setDrawColor(...ORANGE);
+          doc.setLineWidth(1.5);
+          doc.line(featColX, 62, featColX + featColW, 62);
+
+          fy = 90;
+          doc.setFontSize(12);
         }
+
+        doc.setTextColor(...WHITE);
+        doc.setFillColor(...WHITE);
+        // Bullet point
+        doc.circle(featColX + 4, fy - 3, 2.5, 'F');
+        // Text
+        doc.text(wrapped, featColX + 14, fy);
+        fy += neededH;
       }
 
       // ═══════════════════════════════════════════════════════════════════════
-      // GALLERY PAGES — 2 x 2 grid per page (no logo on image pages)
+      // Helper: draw logo with rounded corner cutout in top-left
+      // ═══════════════════════════════════════════════════════════════════════
+      function drawLogoCorner() {
+        const cLogoH = 40;
+        const cLogoW = cLogoH * 2.458;
+        const cornerW = cLogoW + 55;
+        const cornerH = cLogoH + 30;
+        const curveR = 30;
+
+        // Draw rounded teal rectangle in top-left corner
+        doc.setFillColor(...TEAL);
+        // Main rectangle
+        doc.rect(0, 0, cornerW - curveR, cornerH, 'F');
+        doc.rect(0, 0, cornerW, cornerH - curveR, 'F');
+        // Rounded corner (bottom-right of the teal block)
+        // Fill the corner area then mask with a quarter-circle
+        doc.rect(cornerW - curveR, 0, curveR, cornerH - curveR, 'F');
+        doc.rect(0, cornerH - curveR, cornerW - curveR, curveR, 'F');
+        // Draw a filled quarter-circle for the rounded corner
+        const cx = cornerW - curveR;
+        const cy = cornerH - curveR;
+        doc.setFillColor(...TEAL);
+        // Approximate quarter circle with bezier
+        const segments = 20;
+        for (let s = 0; s < segments; s++) {
+          const a1 = (s / segments) * Math.PI / 2;
+          const a2 = ((s + 1) / segments) * Math.PI / 2;
+          const x1 = cx + Math.cos(a1) * curveR;
+          const y1 = cy + Math.sin(a1) * curveR;
+          const x2 = cx + Math.cos(a2) * curveR;
+          const y2 = cy + Math.sin(a2) * curveR;
+          doc.triangle(cx, cy, x1, y1, x2, y2, 'F');
+        }
+
+        // Logo inside the corner
+        doc.addImage(LOGO_BASE64, 'PNG', 35, 10, cLogoW, cLogoH);
+
+        // Orange horizontal line under logo
+        doc.setDrawColor(...ORANGE);
+        doc.setLineWidth(2);
+        doc.line(35, 10 + cLogoH + 5, 35 + cLogoW, 10 + cLogoH + 5);
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // GALLERY PAGES — 2 x 2 grid per page
       // ═══════════════════════════════════════════════════════════════════════
       const galleryStart = loadedImages.length > 1 ? 2 : 1;
       const galleryImages = loadedImages.slice(galleryStart);
       const PER_PAGE = 4;
 
-      // Cell positions (from template analysis: 792 x 612 pt landscape letter)
+      // Cell positions (792 x 612 pt landscape letter) — shifted down for logo
       const cells = [
-        { x: 43, y: 52, w: 348, h: 261 },  // top-left
-        { x: 403, y: 52, w: 348, h: 261 }, // top-right
-        { x: 43, y: 345, w: 348, h: 261 }, // bottom-left
-        { x: 403, y: 345, w: 348, h: 261 },// bottom-right
+        { x: 43, y: 80, w: 348, h: 240 },  // top-left
+        { x: 403, y: 80, w: 348, h: 240 }, // top-right
+        { x: 43, y: 340, w: 348, h: 240 }, // bottom-left
+        { x: 403, y: 340, w: 348, h: 240 },// bottom-right
       ];
 
       for (let i = 0; i < galleryImages.length; i += PER_PAGE) {
         doc.addPage();
 
-        // Decorative side lines (matching template)
-        doc.setDrawColor(160, 175, 170);
-        doc.setLineWidth(1.5);
-        doc.line(28, 52, 28, 606);      // left
-        doc.line(768, 0, 768, 416);     // right
+        // Orange accent vertical line (left)
+        doc.setDrawColor(...ORANGE);
+        doc.setLineWidth(3);
+        doc.line(28, 0, 28, H);
 
         const chunk = galleryImages.slice(i, i + PER_PAGE);
         for (let j = 0; j < chunk.length; j++) {
           const c = cells[j];
           drawCoverImage(chunk[j], c.x, c.y, c.w, c.h, TEAL);
         }
+
+        // Draw logo corner on top of images (overlaps top-left)
+        drawLogoCorner();
       }
 
       // ═══════════════════════════════════════════════════════════════════════
@@ -545,35 +685,38 @@ function RecordDetail({ record, tableName, onBack }) {
       // ═══════════════════════════════════════════════════════════════════════
       doc.addPage();
 
-      // Logo on details page (no property images, so logo is shown)
-      const detLogoH = 35;
-      const detLogoW = detLogoH * 2.458;
-      doc.addImage(LOGO_BASE64, 'PNG', W - detLogoW - 25, 12, detLogoW, detLogoH);
+      // Orange accent vertical line
+      doc.setDrawColor(...ORANGE);
+      doc.setLineWidth(3);
+      doc.line(25, 0, 25, H);
+
+      // Logo corner (top-left with rounded edge)
+      drawLogoCorner();
 
       doc.setTextColor(...WHITE);
       doc.setFontSize(18);
       doc.setFont('helvetica', 'bold');
-      doc.text('Property Details', 30, 35);
+      doc.text('Property Details', W / 2, 35, { align: 'center' });
 
       // Address & price sub-header
       doc.setTextColor(220, 235, 235);
       doc.setFontSize(11);
       doc.setFont('helvetica', 'normal');
-      doc.text(String(recordTitle).substring(0, 90), 30, 55);
-      if (priceStr) doc.text(priceStr, 30, 72);
+      doc.text(String(recordTitle).substring(0, 90), W / 2, 55, { align: 'center' });
+      if (priceStr) doc.text(priceStr, W / 2, 72, { align: 'center' });
+
+      // Orange line separator
+      doc.setDrawColor(...ORANGE);
+      doc.setLineWidth(1.5);
+      doc.line(40, 78, W - 30, 78);
 
       // Filtered details table
       const textRows = entries
         .filter(([k, v]) => {
           if (EXCLUDED.has(k)) return false;
-          if (v === null || v === undefined) return true;
+          if (v === null || v === undefined || v === '') return false;
           if (typeof v === 'string' && isUrl(v)) return false;
           if (Array.isArray(v) && v.length > 0 && v.every(i => isUrl(String(i)))) return false;
-          return true;
-        })
-        .filter(([, v]) => {
-          // Remove empty / null values to avoid blank rows
-          if (v === null || v === undefined || v === '') return false;
           return true;
         })
         .map(([k, v]) => [
@@ -582,28 +725,33 @@ function RecordDetail({ record, tableName, onBack }) {
         ]);
 
       autoTable(doc, {
-        startY: 85,
+        startY: 88,
         head: [['Field', 'Value']],
         body: textRows,
-        theme: 'plain',
+        theme: 'grid',
         headStyles: {
           textColor: WHITE,
+          fillColor: [32, 68, 70],
           fontStyle: 'bold',
           fontSize: 10,
-          cellPadding: { top: 5, bottom: 5, left: 8, right: 8 },
+          cellPadding: { top: 6, bottom: 6, left: 10, right: 10 },
         },
         columnStyles: {
           0: { fontStyle: 'bold', cellWidth: 170, textColor: WHITE },
-          1: { cellWidth: W - 60 - 170, textColor: [220, 230, 230] },
+          1: { cellWidth: W - 80 - 170, textColor: [220, 230, 230] },
         },
         styles: {
           fontSize: 9,
-          cellPadding: { top: 4, bottom: 4, left: 8, right: 8 },
+          cellPadding: { top: 5, bottom: 5, left: 10, right: 10 },
           overflow: 'linebreak',
-          lineColor: [60, 110, 115],
-          lineWidth: 0.2,
+          fillColor: [42, 90, 93],
+          lineColor: [90, 145, 148],
+          lineWidth: 0.75,
         },
-        margin: { top: 85, right: 30, bottom: 30, left: 30 },
+        alternateRowStyles: {
+          fillColor: [36, 78, 81],
+        },
+        margin: { top: 88, right: 30, bottom: 30, left: 40 },
       });
 
       // Save PDF
@@ -666,29 +814,29 @@ function RecordDetail({ record, tableName, onBack }) {
               ) : null;
             })()}
 
-            {/* Selling price — highlighted */}
+            {/* Price — highlighted */}
             {(() => {
               const price =
-                record.price ||
-                record.asking_price ||
-                record.prijs ||
-                record.koopprijs ||
-                record.selling_price ||
-                record.verkoopprijs;
-              return price ? (
+                record.rental_price || record.huurprijs || record.rent ||
+                record.price || record.asking_price ||
+                record.prijs || record.koopprijs ||
+                record.selling_price || record.verkoopprijs;
+              if (!price) return null;
+              const isRent = !!(record.rental_price || record.huurprijs || record.rent);
+              const raw = String(price).replace(/[€$£\s]/g, '').replace(/,/g, '');
+              const num = parseFloat(raw);
+              const formatted = !isNaN(num)
+                ? `€ ${num.toLocaleString('nl-NL')}, -`
+                : `€ ${String(price).replace(/[€$£]/g, '').trim()}`;
+              const suffix = isRent ? 'excl. Per month' : '';
+              return (
                 <div style={styles.priceTag}>
-                  <span style={styles.priceLabel}>Selling price</span>
-                  <span style={styles.priceValue}>{String(price)}</span>
+                  <span style={styles.priceLabel}>Price</span>
+                  <span style={styles.priceValue}>{formatted}</span>
+                  {suffix && <span style={{ fontSize: '0.75rem', opacity: 0.8, marginTop: '0.15rem' }}>{suffix}</span>}
                 </div>
-              ) : null;
+              );
             })()}
-
-            {/* Property ID badge */}
-            {(record.external_id || record.id) && (
-              <span style={styles.idBadge}>
-                ID&nbsp;{String(record.external_id || record.id)}
-              </span>
-            )}
           </div>
 
           {/* ── Images section (top) ── */}
@@ -821,15 +969,6 @@ const styles = {
     margin: '0.25rem 0 0',
     opacity: 0.88,
     letterSpacing: '0.02em',
-  },
-  idBadge: {
-    display: 'inline-block',
-    marginTop: '0.6rem',
-    fontSize: '0.72rem',
-    fontWeight: '400',
-    opacity: 0.55,
-    letterSpacing: '0.06em',
-    textTransform: 'uppercase',
   },
   priceTag: {
     display: 'inline-flex',
